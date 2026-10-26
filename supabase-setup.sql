@@ -39,6 +39,10 @@ create table if not exists public.transactions (
   category text not null check (char_length(trim(category)) between 1 and 80),
   description text not null check (char_length(trim(description)) between 1 and 180),
   notes text check (notes is null or char_length(notes) <= 1000),
+  transaction_tags text[] not null default '{}'::text[],
+  is_reversed boolean not null default false,
+  is_reversal boolean not null default false,
+  reversal_of uuid references public.transactions(id) on delete set null,
   created_by uuid not null default auth.uid() references auth.users(id) on delete restrict,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

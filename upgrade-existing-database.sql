@@ -197,8 +197,188 @@ grant select, insert, update, delete on public.household_budgets, public.savings
 grant select on public.household_audit_log to authenticated;
 grant usage, select on sequence public.household_audit_log_id_seq to authenticated;
 
+
+-- Income planning: expected income never affects balances until a payment transaction is recorded.
+alter table public.transactions add column if not exists source_name text;
+alter table public.transactions add column if not exists is_loan boolean not null default false;
+alter table public.transactions add column if not exists income_plan_id uuid;
+
+create table if not exists public.income_plans (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households(id) on delete cascade,
+  source_name text not null check (char_length(trim(source_name)) between 1 and 120),
+  category text not null check (char_length(trim(category)) between 1 and 80),
+  description text not null check (char_length(trim(description)) between 1 and 180),
+  expected_amount numeric(14,2) not null check (expected_amount > 0),
+  received_amount numeric(14,2) not null default 0 check (received_amount >= 0),
+  due_date date not null,
+  received_by text not null default 'me' check (received_by in ('me','wife','joint')),
+  frequency text not null default 'none' check (frequency in ('none','weekly','monthly','yearly')),
+  notes text,
+  attachment_path text,
+  is_loan boolean not null default false,
+  active boolean not null default true,
+  created_by uuid not null default auth.uid() references auth.users(id) on delete restrict,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists income_plans_household_due_idx on public.income_plans(household_id,due_date);
+create table if not exists public.income_targets (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households(id) on delete cascade,
+  month_start date not null,
+  target_amount numeric(14,2) not null check (target_amount > 0),
+  created_by uuid not null default auth.uid() references auth.users(id) on delete restrict,
+  created_at timestamptz not null default now(),
+  unique(household_id,month_start)
+);
+
+alter table public.income_plans enable row level security;
+alter table public.income_targets enable row level security;
+drop policy if exists income_plans_member_all on public.income_plans;
+create policy income_plans_member_all on public.income_plans for all to authenticated using (public.is_household_member(household_id)) with check (public.is_household_member(household_id));
+drop policy if exists income_targets_member_all on public.income_targets;
+create policy income_targets_member_all on public.income_targets for all to authenticated using (public.is_household_member(household_id)) with check (public.is_household_member(household_id));
+grant select, insert, update, delete on public.income_plans, public.income_targets to authenticated;
+
+-- Private storage for income supporting documents. Uploads are limited to each user's household folder.
+insert into storage.buckets (id,name,public,file_size_limit,allowed_mime_types) values ('income-attachments','income-attachments',false,10485760,array['image/jpeg','image/png','image/webp','application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']) on conflict (id) do nothing;
+update storage.buckets set public=false,file_size_limit=10485760 where id='income-attachments';
+drop policy if exists income_attachments_member_select on storage.objects;
+create policy income_attachments_member_select on storage.objects for select to authenticated using (bucket_id='income-attachments' and (storage.foldername(name))[1] in (select household_id::text from public.household_members where user_id=auth.uid()));
+drop policy if exists income_attachments_member_insert on storage.objects;
+create policy income_attachments_member_insert on storage.objects for insert to authenticated with check (bucket_id='income-attachments' and (storage.foldername(name))[1] in (select household_id::text from public.household_members where user_id=auth.uid()));
+drop policy if exists income_attachments_member_delete on storage.objects;
+create policy income_attachments_member_delete on storage.objects for delete to authenticated using (bucket_id='income-attachments' and (storage.foldername(name))[1] in (select household_id::text from public.household_members where user_id=auth.uid()));
+
 commit;
 
 -- Optional verification (run separately):
 -- select tablename, rowsecurity from pg_tables where schemaname='public' and tablename in
 -- ('transactions','household_budgets','savings_goals','household_debts','household_assets','household_accounts','household_audit_log');
+
+-- Expense management upgrade: planned bills, ownership, refunds, principal repayments and private attachments.
+begin;
+alter table public.transactions add column if not exists expense_recipient text;
+alter table public.transactions add column if not exists expense_owner text not null default 'me' check (expense_owner in ('me','wife','joint'));
+alter table public.transactions add column if not exists expense_is_refund boolean not null default false;
+alter table public.transactions add column if not exists is_debt_principal boolean not null default false;
+alter table public.transactions add column if not exists expense_kind text not null default 'ordinary' check (expense_kind in ('ordinary','refund','debt_principal','bill'));
+alter table public.transactions add column if not exists attachment_path text;
+create table if not exists public.expense_plans (
+ id uuid primary key default gen_random_uuid(),
+ household_id uuid not null references public.households(id) on delete cascade,
+ payee text not null check (char_length(trim(payee)) between 1 and 120),
+ category text not null check (char_length(trim(category)) between 1 and 80),
+ description text not null check (char_length(trim(description)) between 1 and 180),
+ expected_amount numeric(14,2) not null check (expected_amount > 0),
+ paid_amount numeric(14,2) not null default 0 check (paid_amount >= 0),
+ due_date date not null,
+ owner text not null default 'joint' check (owner in ('me','wife','joint')),
+ frequency text not null default 'none' check (frequency in ('none','weekly','monthly','yearly')),
+ notes text,
+ attachment_path text,
+ active boolean not null default true,
+ created_by uuid not null default auth.uid() references auth.users(id) on delete restrict,
+ created_at timestamptz not null default now(),
+ updated_at timestamptz not null default now(),
+ check (paid_amount <= expected_amount)
+);
+create index if not exists expense_plans_household_due_idx on public.expense_plans(household_id,due_date);
+alter table public.expense_plans enable row level security;
+drop policy if exists expense_plans_member_all on public.expense_plans;
+create policy expense_plans_member_all on public.expense_plans for all to authenticated using (public.is_household_member(household_id)) with check (public.is_household_member(household_id) and created_by=(select auth.uid()));
+grant select,insert,update,delete on public.expense_plans to authenticated;
+insert into storage.buckets (id,name,public,file_size_limit,allowed_mime_types) values ('expense-attachments','expense-attachments',false,10485760,array['image/jpeg','image/png','image/webp','application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']) on conflict (id) do nothing;
+update storage.buckets set public=false,file_size_limit=10485760 where id='expense-attachments';
+drop policy if exists expense_attachments_member_select on storage.objects;
+create policy expense_attachments_member_select on storage.objects for select to authenticated using (bucket_id='expense-attachments' and (storage.foldername(name))[1] in (select household_id::text from public.household_members where user_id=auth.uid()));
+drop policy if exists expense_attachments_member_insert on storage.objects;
+create policy expense_attachments_member_insert on storage.objects for insert to authenticated with check (bucket_id='expense-attachments' and (storage.foldername(name))[1] in (select household_id::text from public.household_members where user_id=auth.uid()));
+drop policy if exists expense_attachments_member_delete on storage.objects;
+create policy expense_attachments_member_delete on storage.objects for delete to authenticated using (bucket_id='expense-attachments' and (storage.foldername(name))[1] in (select household_id::text from public.household_members where user_id=auth.uid()));
+commit;
+
+-- Link principal repayments to the loan they reduce.
+alter table public.transactions add column if not exists debt_id uuid references public.household_debts(id) on delete set null;
+
+
+-- Transaction ledger tags and auditable reversals. Reversals offset account movement without counting as new income/expense.
+alter table public.transactions add column if not exists transaction_tags text[] not null default '{}'::text[];
+alter table public.transactions add column if not exists is_reversed boolean not null default false;
+alter table public.transactions add column if not exists is_reversal boolean not null default false;
+alter table public.transactions add column if not exists reversal_of uuid references public.transactions(id) on delete set null;
+create index if not exists transactions_reversal_of_idx on public.transactions(reversal_of);
+
+alter table public.transactions add column if not exists expense_plan_id uuid references public.expense_plans(id) on delete set null;
+
+
+-- Budget planning upgrade: owner scopes, needs/wants/savings, rollover and monthly income plans.
+begin;
+alter table public.household_budgets add column if not exists owner_scope text not null default 'household';
+alter table public.household_budgets add column if not exists spending_kind text not null default 'need';
+alter table public.household_budgets add column if not exists rollover_unused boolean not null default false;
+alter table public.household_budgets add column if not exists notes text;
+alter table public.household_budgets drop constraint if exists household_budgets_owner_scope_check;
+alter table public.household_budgets add constraint household_budgets_owner_scope_check check (owner_scope in ('household','me','wife','joint'));
+alter table public.household_budgets drop constraint if exists household_budgets_spending_kind_check;
+alter table public.household_budgets add constraint household_budgets_spending_kind_check check (spending_kind in ('need','want','saving'));
+alter table public.household_budgets drop constraint if exists household_budgets_household_id_category_month_start_key;
+create unique index if not exists household_budgets_scope_unique on public.household_budgets(household_id, category, month_start, owner_scope);
+create table if not exists public.household_budget_settings (
+ id uuid primary key default gen_random_uuid(),
+ household_id uuid not null references public.households(id) on delete cascade,
+ month_start date not null,
+ planned_income numeric(14,2) not null default 0 check (planned_income >= 0),
+ zero_based boolean not null default false,
+ created_by uuid not null default auth.uid() references auth.users(id) on delete restrict,
+ created_at timestamptz not null default now(),
+ updated_at timestamptz not null default now(),
+ unique(household_id, month_start)
+);
+create index if not exists household_budget_settings_month_idx on public.household_budget_settings(household_id, month_start desc);
+alter table public.household_budget_settings enable row level security;
+drop policy if exists household_budget_settings_member_all on public.household_budget_settings;
+create policy household_budget_settings_member_all on public.household_budget_settings for all to authenticated using (public.is_household_member(household_id)) with check (public.is_household_member(household_id));
+drop trigger if exists household_budget_settings_set_updated_at on public.household_budget_settings;
+create trigger household_budget_settings_set_updated_at before update on public.household_budget_settings for each row execute function public.set_transaction_updated_at();
+drop trigger if exists household_budget_settings_audit_log on public.household_budget_settings;
+create trigger household_budget_settings_audit_log after insert or update or delete on public.household_budget_settings for each row execute function public.audit_household_financial_record();
+grant select, insert, update, delete on public.household_budget_settings to authenticated;
+commit;
+
+
+-- ASSET REGISTER UPGRADE (safe to run on an existing database)
+alter table public.household_assets add column if not exists purchase_cost numeric(14,2) not null default 0 check (purchase_cost >= 0);
+alter table public.household_assets add column if not exists valuation_date date;
+alter table public.household_assets add column if not exists owner text not null default 'joint' check (owner in ('me','wife','joint'));
+alter table public.household_assets add column if not exists owner_share numeric(5,2) not null default 100 check (owner_share >= 0 and owner_share <= 100);
+alter table public.household_assets add column if not exists location text;
+alter table public.household_assets add column if not exists linked_debt numeric(14,2) not null default 0 check (linked_debt >= 0);
+alter table public.household_assets add column if not exists insurance_provider text;
+alter table public.household_assets add column if not exists insurance_expiry date;
+alter table public.household_assets add column if not exists document_url text;
+alter table public.household_assets add column if not exists monthly_rental_income numeric(14,2) not null default 0 check (monthly_rental_income >= 0);
+alter table public.household_assets add column if not exists depreciation_notes text;
+update public.household_assets set valuation_date = coalesce(valuation_date, acquired_on, current_date) where valuation_date is null;
+
+create table if not exists public.household_asset_valuations (
+ id uuid primary key default gen_random_uuid(),
+ household_id uuid not null references public.households(id) on delete cascade,
+ asset_id uuid not null references public.household_assets(id) on delete cascade,
+ value numeric(14,2) not null check (value >= 0),
+ valuation_date date not null default current_date,
+ notes text,
+ created_by uuid not null default auth.uid() references auth.users(id) on delete restrict,
+ created_at timestamptz not null default now()
+);
+create index if not exists household_asset_valuations_asset_date_idx on public.household_asset_valuations(asset_id, valuation_date desc);
+alter table public.household_asset_valuations enable row level security;
+drop policy if exists "Members can view household_asset_valuations" on public.household_asset_valuations;
+create policy "Members can view household_asset_valuations" on public.household_asset_valuations for select to authenticated using (public.is_household_member(household_id));
+drop policy if exists "Members can insert household_asset_valuations" on public.household_asset_valuations;
+create policy "Members can insert household_asset_valuations" on public.household_asset_valuations for insert to authenticated with check (public.is_household_member(household_id) and created_by = auth.uid());
+drop policy if exists "Members can update household_asset_valuations" on public.household_asset_valuations;
+create policy "Members can update household_asset_valuations" on public.household_asset_valuations for update to authenticated using (public.is_household_member(household_id)) with check (public.is_household_member(household_id));
+drop policy if exists "Members can delete household_asset_valuations" on public.household_asset_valuations;
+create policy "Members can delete household_asset_valuations" on public.household_asset_valuations for delete to authenticated using (public.is_household_member(household_id));
