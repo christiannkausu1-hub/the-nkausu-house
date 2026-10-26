@@ -1,90 +1,62 @@
-# THE NKAUSU HOUSE
+# THE NKAUSU HOUSE — Household Accounting
 
-A responsive household accounting website for two household members. Built with HTML, CSS and vanilla JavaScript, Supabase Auth/Postgres/RLS, and deployable to Cloudflare Pages from GitHub.
+Updated responsive household accounting website using HTML/CSS/JavaScript, Supabase Auth + Postgres Row Level Security, and Cloudflare Pages. The existing navy, slate, grey and white visual style is retained.
 
-## Included files
+## Files in this package
 
-- `index.html` — application structure and sign-in/create-account interface
-- `styles.css` — mobile-friendly navy, slate, grey and white theme
-- `app.js` — Supabase client, dashboard, transactions, household setup and invitations
-- `supabase-setup.sql` — tables, indexes, security-definer functions and Row Level Security policies
-- `README.md` — setup and publishing instructions
+- `index.html` — dashboard, income/expenses, transactions, reports, budgets, savings, debts, assets, settings/access.
+- `styles.css` — responsive desktop and mobile design.
+- `app.js` — Supabase integration, editing, reports, account balances, budget warnings, backups, restore, and offline transaction queue.
+- `supabase-setup.sql` — **original initial setup only**. Do not rerun it on an existing database.
+- `upgrade-existing-database.sql` — additive migration for an existing installation.
+- `manifest.webmanifest`, `icon.svg`, `sw.js` — installable app metadata, icon and cached app shell.
 
-## 1. Create the Supabase project
+## IMPORTANT: Upgrade an existing installation safely
 
-1. Sign in at https://supabase.com and create a new project for **THE NKAUSU HOUSE**.
-2. Choose a strong database password and store it privately. The website does not need the database password.
-3. Open **SQL Editor** in your Supabase project.
-4. Open `supabase-setup.sql` from this package, copy all of its contents, paste into the SQL Editor and run it.
-5. In **Project Settings → API** (wording may vary), copy the Project URL and the **publishable key** or legacy `anon` public key. Do **not** copy the `service_role` key.
-6. In **Authentication → URL Configuration**, add your future Cloudflare Pages site URL to the allowed redirect URLs after deploying (for example `https://your-project.pages.dev/**`). For local testing you can also add `http://localhost:8000/**`.
-7. Email confirmation may be enabled by default. The person signing up should confirm their email before signing in. Configure SMTP if you need reliable production email delivery beyond Supabase's default limits.
+1. Keep your existing Supabase project, GitHub repository, Cloudflare Pages project, Auth users, household membership and records.
+2. Before changing the live site, export a full backup from Reports after the new app is deployed, or create a database backup from Supabase if available.
+3. Open your existing Supabase project → **SQL Editor** → **New query**.
+4. Open `upgrade-existing-database.sql` from this package and copy its entire contents into SQL Editor. Read the comments at the top, then run it once. It adds columns and new tables, updates the transaction type constraint to support transfers, and applies household-scoped RLS. It does not drop existing tables or rows.
+5. If Supabase shows an error, stop and send the exact error text before proceeding. Do not rerun the original `supabase-setup.sql` against the existing project.
 
-## 2. Configure the website
+The migration must succeed before the upgraded app can load the new sections because it queries the new tables.
 
-1. Open `app.js`.
-2. Near the top, replace:
-   - `YOUR_SUPABASE_PROJECT_URL` with your Supabase Project URL.
-   - `YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY` with your publishable/anon key.
-3. Save the file. A publishable/anon key is expected to be visible in a browser; RLS is the security boundary. **Never put a service-role key or database password in `app.js`, GitHub, or Cloudflare Pages variables used by client-side code.**
-4. Keep all files together in the repository root.
+## Deploy the updated files
 
-## 3. Upload source to GitHub
+1. Extract this ZIP.
+2. Upload/replace the files in the root of the same GitHub repository connected to Cloudflare Pages: `index.html`, `styles.css`, `app.js`, `README.md`, `manifest.webmanifest`, `icon.svg`, `sw.js`, and `upgrade-existing-database.sql`. Keep `supabase-setup.sql` for reference.
+3. Commit the changes to the branch Cloudflare Pages deploys from.
+4. Wait for Cloudflare Pages to finish the deployment, then open the deployed site and sign in with your existing account.
+5. In Supabase → Authentication → URL Configuration, make sure your actual deployed site URL is listed in allowed redirect URLs.
 
-1. Sign in to https://github.com and create a new repository named `the-nkausu-house` (or use a repository you control).
-2. Extract the ZIP on your phone or computer.
-3. Upload `index.html`, `styles.css`, `app.js`, `supabase-setup.sql`, and `README.md` to the repository root, or use GitHub's web upload interface.
-4. Commit the files to the default branch (usually `main`).
+The Supabase URL and publishable key you supplied are already configured in `app.js`. A publishable/anon key is intended for browser use. Never use a `service_role` key, secret key or database password in the frontend.
 
-## 4. Publish with Cloudflare Pages
+## Included upgrades
 
-1. Sign in to https://dash.cloudflare.com.
-2. Open **Workers & Pages** → **Create** → **Pages** → **Connect to Git** (labels may vary).
-3. Connect GitHub and select the `the-nkausu-house` repository.
-4. For a plain HTML site, use no framework preset. Leave the build command blank. Set the output directory to `/` or the repository root as Cloudflare's interface requests.
-5. Deploy. Cloudflare will give you a `https://...pages.dev` address.
-6. Return to Supabase **Authentication → URL Configuration** and add the exact Pages URL to the allowed redirect URLs. Add it as the Site URL if desired.
-7. Open the Pages URL on your Android phone and computer. The site should load the sign-in screen.
+- Transaction editing and deletion confirmation.
+- Income, expenses and transfer records. Transfers subtract from one account and add to another; they are excluded from income/expense totals.
+- Payment method, account, and recorded-by fields.
+- Account opening balances and calculated balances for Cash, Bank, Airtel Money, MTN MoMo and Other.
+- Dashboard totals, monthly summary, recent transactions, net worth, account balances and current budget warnings.
+- Monthly/yearly/all-time reports, expense category breakdown and CSV export.
+- JSON backup export and additive restore. Restore does not clear existing records; use backups privately.
+- Monthly category budgets with 75% warnings and over-budget alerts.
+- Savings goals with progress updates (including an emergency fund goal).
+- Debts/receivables, outstanding balances and planned monthly payments.
+- Asset register and net-worth calculation (assets + receivables − debts owed).
+- Audit history for transaction, budget, savings, debt, asset and account opening balance changes.
+- Dedicated **Household Setup** navigation section removed. Invitation and join controls are located under **Settings & Access** so existing shared access continues to work.
+- Installable PWA metadata and service-worker caching of the app shell. When the app is already loaded and the device goes offline, new transaction entries can be queued locally and synced when connectivity returns.
 
-## 5. Set up your shared household
+## Accounting notes
 
-1. Open the published website and create your own account using your email and a strong unique password. Confirm your email if requested.
-2. Sign in, open **Household setup**, enter `THE NKAUSU HOUSE`, and create the household.
-3. Choose **Generate invitation code**. Send that code privately to your wife. The code expires after 7 days and is single-use.
-4. Your wife opens the same website, creates her own account with her own email and password, confirms her email, signs in, opens **Household setup**, enters the code and selects **Join household**.
-5. Both accounts then access the same household transactions. Each user must belong to only one household in this initial version.
+- Current account balances = opening balances + income − expenses + incoming transfers − outgoing transfers, based only on records entered into this system.
+- Net movement = income − expenses; transfers are not income or expense.
+- Net worth = assets + money owed to the household − debts the household owes. This estimate is only as accurate as the values entered.
+- Debt repayments are not automatically linked to a debt record; record the repayment as an expense and update the outstanding balance in Debts.
+- Offline entries are stored in this browser's local storage until they sync. Do not clear browser data before syncing. Avoid using offline mode on shared/public devices.
+- The PWA app shell can be cached, but Supabase authentication and cloud data require internet. This is not a fully offline database.
 
-## 6. Everyday use
+## Current verification status
 
-- **Dashboard:** all-time household income, all-time expenses, net balance, current-month totals, 12-month chart and recent activity.
-- **Income:** record salary, business income, gifts and other income.
-- **Expenses:** record groceries, rent, utilities, transport, school, medical, debt repayment and other household costs.
-- **Transactions:** search, filter by type and date, review notes, and delete a record after confirmation.
-- Amounts are in Zambian kwacha (ZMW).
-- Data is stored in Supabase, not in browser local storage.
-
-## Security notes
-
-- Row Level Security is enabled on all four tables. Household records are visible only to users who are members of that household.
-- Household creation, invitation creation and invitation redemption are handled by restricted database functions.
-- Invitation codes are stored as SHA-256 hashes, expire after seven days, and can be redeemed once.
-- The frontend only uses the publishable/anon key. Never expose `service_role` or database credentials.
-- Keep Supabase Auth enabled and use strong passwords. Review Supabase Auth settings and database logs before storing highly sensitive information.
-- Deleting a transaction is permanent; the website asks for confirmation first.
-- The current version supports one household per user, one owner and one invited member. It does not yet include editing existing transactions, CSV export, attachments, budgets or automated bank imports.
-
-## Upgrades without losing records
-
-Keep `transactions` and existing household tables in place. For future changes, write additive SQL migrations (`ALTER TABLE`, new columns/tables, indexes, and carefully updated policies/functions) rather than dropping tables or resetting the database. Back up your Supabase project before any production schema change.
-
-## Troubleshooting
-
-- **“Setup needed” on sign-in:** confirm the two configuration values at the top of `app.js` and redeploy.
-- **Email confirmation / sign-in issue:** check the confirmation email and Supabase Authentication logs; verify your Pages URL is listed in Auth URL Configuration.
-- **Permission denied / RLS error:** ensure `supabase-setup.sql` ran successfully and the signed-in account created or joined a household.
-- **Household not loading:** inspect the browser console and Supabase logs. Do not disable RLS to work around errors.
-- **Cloudflare page not found:** confirm `index.html` is at the repository root and the Pages output directory points to that root.
-
-## Test status
-
-The package was generated and its files and JavaScript syntax were checked before delivery. This does **not** mean it has been connected to your Supabase project, deployed to Cloudflare Pages, or tested end-to-end with two live accounts. Those steps require your own project credentials and GitHub/Cloudflare access.
+The JavaScript syntax and package integrity are checked locally. The migration has not been run against the live Supabase database here, and the updated site has not been deployed or end-to-end tested with live accounts from this session. Those steps require access to your Supabase/GitHub/Cloudflare projects. Do not treat the app as upgraded until the migration succeeds and the new deployment finishes.

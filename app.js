@@ -1,226 +1,92 @@
-/* THE NKAUSU HOUSE — browser client. Configure SUPABASE_URL and SUPABASE_ANON_KEY below.
-   The anon/publishable key is intended for browser use; database access is restricted by RLS.
-   NEVER put a service-role key or database password in this file. */
+/* THE NKAUSU HOUSE — browser client. Uses only the Supabase publishable/anon key in the browser. */
 (() => {
   "use strict";
   const SUPABASE_URL = "https://amwkvigiygyfofxucbta.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_c2qgtYSuEJPvpX6yqGSfNQ_7Qv6fsi1";
-  const $ = (id) => document.getElementById(id);
+  const $ = id => document.getElementById(id);
   const categories = {
-    income: ["Salary", "Business income", "Gift", "Interest", "Refund", "Other income"],
-    expense: ["Groceries", "Rent", "Electricity", "Water", "Transport", "School expenses", "Medical expenses", "Debt repayment", "Clothing", "Communication", "Household supplies", "Other expense"]
+    income: ["Salary", "Business income", "Gift", "Rental income", "Interest", "Refund", "Other income"],
+    expense: ["Groceries", "Rent", "Electricity", "Water", "Transport", "School expenses", "Medical expenses", "Debt repayment", "Clothing", "Communication", "Household supplies", "Other expense"],
+    transfer: ["Account transfer"]
   };
-  const state = { client: null, user: null, household: null, transactions: [], page: "dashboard", authMode: "signin", inviteCode: "", busy: false };
-  const money = n => new Intl.NumberFormat("en-ZM", { style: "currency", currency: "ZMW" }).format(Number(n || 0));
-  const today = () => new Date().toISOString().slice(0, 10);
-  const escapeHtml = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
-  const setMessage = (id, msg, kind = "") => { const el = $(id); if (el) { el.textContent = msg || ""; el.className = "notice" + (kind ? " " + kind : ""); } };
-  const toast = msg => { const el = $("toast"); el.textContent = msg; el.classList.add("show"); window.setTimeout(() => el.classList.remove("show"), 2800); };
-  const isConfigured = () => SUPABASE_URL.startsWith("https://") && !SUPABASE_URL.includes("YOUR_") && SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.includes("YOUR_");
-  const currentMonth = () => new Date().toISOString().slice(0, 7);
-  const sum = (list, type, month = null) => list.filter(t => t.type === type && (!month || t.transaction_date.slice(0,7) === month)).reduce((a,t) => a + Number(t.amount), 0);
-  const showAuth = () => { $("authView").classList.remove("hidden"); $("appView").classList.add("hidden"); };
-  const showApp = () => { $("authView").classList.add("hidden"); $("appView").classList.remove("hidden"); $("userEmail").textContent = state.user?.email || ""; };
-  const errText = e => e?.message || String(e || "Unknown error");
-
-  function setAuthMode(mode) {
-    state.authMode = mode;
-    document.querySelectorAll("[data-auth-tab]").forEach(b => b.classList.toggle("active", b.dataset.authTab === mode));
-    $("signupFields").classList.toggle("hidden", mode !== "signup");
-    $("authSubmit").textContent = mode === "signup" ? "Create account" : "Sign in";
-    $("authPassword").autocomplete = mode === "signup" ? "new-password" : "current-password";
-    setMessage("authMessage", "");
-  }
-  function navigate(page) {
-    state.page = page;
-    document.querySelectorAll(".page").forEach(el => el.classList.add("hidden"));
-    $(page + "Page")?.classList.remove("hidden");
-    document.querySelectorAll("[data-page]").forEach(b => b.classList.toggle("active", b.dataset.page === page));
-    $("pageTitle").textContent = ({dashboard:"DASHBOARD",income:"INCOME",expenses:"EXPENSES",transactions:"TRANSACTIONS",household:"HOUSEHOLD SETUP"})[page] || "DASHBOARD";
-    if (page === "household") renderHousehold();
-    if (page === "income") renderList("incomeList", state.transactions.filter(t => t.type === "income"));
-    if (page === "expenses") renderList("expenseList", state.transactions.filter(t => t.type === "expense"));
-    if (page === "transactions") renderTransactions();
-  }
-  async function refresh() {
-    if (!state.client || !state.user) return;
-    const { data, error } = await state.client.from("transactions").select("id,household_id,type,amount,transaction_date,category,description,notes,created_by,created_at").order("transaction_date", { ascending: false }).order("created_at", { ascending: false });
-    if (error) throw error;
-    state.transactions = data || [];
-    await loadHousehold();
-    renderDashboard();
-    if (state.page === "income") renderList("incomeList", state.transactions.filter(t => t.type === "income"));
-    if (state.page === "expenses") renderList("expenseList", state.transactions.filter(t => t.type === "expense"));
-    if (state.page === "transactions") renderTransactions();
-    if (state.page === "household") renderHousehold();
-  }
-  async function loadHousehold() {
-    const { data: membership, error } = await state.client.from("household_members").select("household_id,role,households(id,name,created_at)").maybeSingle();
-    if (error) throw error;
-    state.household = membership ? { id: membership.household_id, role: membership.role, name: membership.households?.name || "THE NKAUSU HOUSE", created_at: membership.households?.created_at } : null;
-    const banner = $("setupBanner");
-    if (!state.household) {
-      banner.innerHTML = "<strong>Finish your household setup</strong>Create a household or join one using an invitation code before recording transactions.";
-      banner.classList.remove("hidden");
-    } else banner.classList.add("hidden");
-  }
-  function renderDashboard() {
-    const tx = state.transactions, m = currentMonth();
-    $("totalIncome").textContent = money(sum(tx,"income"));
-    $("totalExpenses").textContent = money(sum(tx,"expense"));
-    $("netBalance").textContent = money(sum(tx,"income") - sum(tx,"expense"));
-    $("monthIncome").textContent = money(sum(tx,"income",m));
-    $("monthExpenses").textContent = money(sum(tx,"expense",m));
-    const yearSelect = $("summaryYear"), years = new Set([String(new Date().getFullYear())]);
-    tx.forEach(t => years.add(t.transaction_date.slice(0,4)));
-    const old = yearSelect.value;
-    yearSelect.innerHTML = [...years].sort((a,b)=>b.localeCompare(a)).map(y=>`<option value="${y}">${y}</option>`).join("");
-    if ([...years].includes(old)) yearSelect.value = old;
-    renderMonthly();
-    $("recentTransactions").innerHTML = tx.length ? tx.slice(0,6).map(transactionRow).join("") : '<div class="empty">No transactions yet. Add your first household record.</div>';
-  }
-  function renderMonthly() {
-    const year = $("summaryYear").value || String(new Date().getFullYear()), tx = state.transactions.filter(t => t.transaction_date.startsWith(year));
-    const months = Array.from({length:12},(_,i)=>({key:`${year}-${String(i+1).padStart(2,"0")}`,label:new Date(Number(year),i,1).toLocaleDateString("en",{month:"short"})}));
-    const values = months.map(m=>({...m,income:sum(tx,"income",m.key),expense:sum(tx,"expense",m.key)}));
-    const max = Math.max(1,...values.flatMap(v=>[v.income,v.expense]));
-    $("monthlySummary").innerHTML = values.map(v=>`<div class="month-row"><div class="month-name">${v.label}</div><div class="month-bars"><div class="bar-track" title="Income ${money(v.income)}"><div class="bar" style="width:${Math.max(0,v.income/max*100)}%"></div></div><div class="bar-track" title="Expenses ${money(v.expense)}"><div class="bar expense" style="width:${Math.max(0,v.expense/max*100)}%"></div></div><div class="bar-legend"><span>In ${money(v.income)}</span><span>Out ${money(v.expense)}</span></div></div></div>`).join("");
-  }
-  function transactionRow(t) {
-    return `<div class="transaction-row"><div><div class="transaction-name">${escapeHtml(t.description)}</div><div class="transaction-meta">${escapeHtml(t.category)} · ${escapeHtml(t.transaction_date)}</div></div><div class="amount ${t.type}">${t.type==="income"?"+":"−"}${money(t.amount)}</div></div>`;
-  }
-  function renderList(id, tx) {
-    $(id).innerHTML = tx.length ? `<div class="table-wrap"><table><thead><tr><th>DATE</th><th>DESCRIPTION</th><th>CATEGORY</th><th>AMOUNT</th><th></th></tr></thead><tbody>${tx.map(t=>`<tr><td>${escapeHtml(t.transaction_date)}</td><td>${escapeHtml(t.description)}${t.notes?`<div class="transaction-meta">${escapeHtml(t.notes)}</div>`:""}</td><td>${escapeHtml(t.category)}</td><td class="amount ${t.type}">${t.type==="income"?"+":"−"}${money(t.amount)}</td><td><button class="delete-btn" data-delete="${escapeHtml(t.id)}">Delete</button></td></tr>`).join("")}</tbody></table></div>` : '<div class="empty">No records in this section yet.</div>';
-  }
-  function renderTransactions() {
-    const q = $("searchTransactions").value.trim().toLowerCase(), type = $("typeFilter").value, from = $("fromDate").value, to = $("toDate").value;
-    const tx = state.transactions.filter(t => (type==="all" || t.type===type) && (!from || t.transaction_date>=from) && (!to || t.transaction_date<=to) && (!q || `${t.description} ${t.category} ${t.notes||""}`.toLowerCase().includes(q)));
-    renderList("transactionList",tx);
-  }
-  function renderHousehold() {
-    const h = state.household;
-    $("householdDetails").innerHTML = h ? `<div class="household-detail"><span>Household</span><strong>${escapeHtml(h.name)}</strong></div><div class="household-detail"><span>Your role</span><strong>${escapeHtml(h.role)}</strong></div><div class="household-detail"><span>Household ID</span><strong>${escapeHtml(h.id)}</strong></div>` : '<p class="muted">You have not created or joined a household yet.</p>';
-    $("householdForm").classList.toggle("hidden",!!h);
-    $("joinForm").classList.toggle("hidden",!!h);
-    $("generateInvite").disabled = !h || h.role !== "owner";
-  }
-  function openDialog(type = "income") {
-    if (!state.household) { navigate("household"); toast("Create or join your household first."); return; }
-    $("transactionForm").reset();
-    $("recordType").value = type;
-    $("recordDate").value = today();
-    populateCategories(type);
-    $("dialogTitle").textContent = type === "income" ? "ADD INCOME" : "ADD EXPENSE";
-    setMessage("formMessage","");
-    $("transactionDialog").showModal();
-  }
-  function populateCategories(type) {
-    const select = $("recordCategory");
-    select.innerHTML = categories[type].map(c=>`<option>${escapeHtml(c)}</option>`).join("");
-  }
-  async function handleAuth(e) {
-    e.preventDefault();
-    if (!isConfigured()) { setMessage("authMessage","Setup needed: add your Supabase project URL and publishable/anon key in app.js, then redeploy.","error"); return; }
-    const email = $("authEmail").value.trim(), password = $("authPassword").value;
-    $("authSubmit").disabled = true;
-    try {
-      if (state.authMode === "signup") {
-        const { data, error } = await state.client.auth.signUp({ email, password, options: { data: { full_name: $("displayName").value.trim() } } });
-        if (error) throw error;
-        if (!data.session) setMessage("authMessage","Account created. Check your email to confirm your address, then sign in.","success");
-        else { state.user = data.user; await enterApp(); }
-      } else {
-        const { data, error } = await state.client.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-        state.user = data.user; await enterApp();
-      }
-    } catch (err) { setMessage("authMessage",errText(err),"error"); }
-    finally { $("authSubmit").disabled = false; }
-  }
-  async function enterApp() {
-    showApp();
-    try { await refresh(); navigate("dashboard"); }
-    catch (e) { toast("Could not load household data: " + errText(e)); }
-  }
-  async function saveTransaction(e) {
-    e.preventDefault();
-    if (!state.household) return;
-    $("saveRecord").disabled = true;
-    try {
-      const payload = { household_id:state.household.id, type:$("recordType").value, amount:Number($("recordAmount").value), transaction_date:$("recordDate").value, category:$("recordCategory").value, description:$("recordDescription").value.trim(), notes:$("recordNotes").value.trim() || null };
-      const { error } = await state.client.from("transactions").insert(payload);
-      if (error) throw error;
-      $("transactionDialog").close(); await refresh(); toast("Transaction saved.");
-    } catch (e) { setMessage("formMessage",errText(e),"error"); }
-    finally { $("saveRecord").disabled = false; }
-  }
-  async function deleteTransaction(id) {
-    if (!window.confirm("Delete this transaction? This cannot be undone.")) return;
-    try {
-      const { error } = await state.client.from("transactions").delete().eq("id",id);
-      if (error) throw error;
-      await refresh(); toast("Transaction deleted.");
-    } catch (e) { toast("Could not delete transaction: "+errText(e)); }
-  }
-  async function createHousehold(e) {
-    e.preventDefault(); setMessage("householdMessage","");
-    try {
-      const { data, error } = await state.client.rpc("create_household", { household_name:$("householdName").value.trim() });
-      if (error) throw error;
-      setMessage("householdMessage","Household created successfully.","success"); await refresh(); toast("Household ready.");
-    } catch (e) { setMessage("householdMessage",errText(e),"error"); }
-  }
-  async function joinHousehold(e) {
-    e.preventDefault(); setMessage("joinMessage","");
-    try {
-      const { error } = await state.client.rpc("join_household", { invitation_code:$("inviteCode").value.trim() });
-      if (error) throw error;
-      setMessage("joinMessage","You have joined the household.","success"); await refresh(); toast("Household joined.");
-    } catch (e) { setMessage("joinMessage",errText(e),"error"); }
-  }
-  async function generateInvite() {
-    $("generateInvite").disabled = true; setMessage("inviteMessage","");
-    try {
-      const { data, error } = await state.client.rpc("create_household_invitation");
-      if (error) throw error;
-      state.inviteCode = data; $("copyInvite").disabled = false;
-      setMessage("inviteMessage","Invitation code created. Share it privately; it expires in 7 days and works once.","success");
-      $("inviteMessage").dataset.code = data; toast("Invitation code created.");
-    } catch (e) { setMessage("inviteMessage",errText(e),"error"); }
-    finally { $("generateInvite").disabled = !(state.household && state.household.role === "owner"); }
-  }
-  async function copyInvite() {
-    const code = $("inviteMessage").dataset.code || state.inviteCode;
-    if (!code) return;
-    try { await navigator.clipboard.writeText(code); toast("Invitation code copied."); }
-    catch { window.prompt("Copy this invitation code:",code); }
-  }
-  function init() {
-    document.querySelectorAll("[data-auth-tab]").forEach(b=>b.addEventListener("click",()=>setAuthMode(b.dataset.authTab)));
-    $("authForm").addEventListener("submit",handleAuth);
-    document.querySelectorAll("[data-page]").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.page)));
-    document.querySelectorAll("[data-go]").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.go)));
-    document.querySelectorAll("[data-add]").forEach(b=>b.addEventListener("click",()=>openDialog(b.dataset.add)));
-    $("quickAdd").addEventListener("click",()=>openDialog("income"));
-    $("transactionAdd").addEventListener("click",()=>openDialog("income"));
-    $("recordType").addEventListener("change",()=>{populateCategories($("recordType").value);$("dialogTitle").textContent=$("recordType").value==="income"?"ADD INCOME":"ADD EXPENSE";});
-    $("transactionForm").addEventListener("submit",saveTransaction);
-    ["closeDialog","cancelDialog"].forEach(id=>$(id).addEventListener("click",()=>$("transactionDialog").close()));
-    $("summaryYear").addEventListener("change",renderMonthly);
-    ["searchTransactions","typeFilter","fromDate","toDate"].forEach(id=>$(id).addEventListener("input",renderTransactions));
-    document.addEventListener("click",e=>{const b=e.target.closest("[data-delete]");if(b)deleteTransaction(b.dataset.delete);});
-    $("householdForm").addEventListener("submit",createHousehold);
-    $("joinForm").addEventListener("submit",joinHousehold);
-    $("generateInvite").addEventListener("click",generateInvite);
-    $("copyInvite").addEventListener("click",copyInvite);
-    $("signOut").addEventListener("click",async()=>{await state.client.auth.signOut();state.user=null;state.household=null;state.transactions=[];showAuth();});
-    if (!isConfigured()) setMessage("authMessage","First-time setup: follow README.md to create the Supabase project, run supabase-setup.sql, then configure app.js.","error");
-    if (window.supabase && isConfigured()) {
-      state.client = window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
-      state.client.auth.onAuthStateChange((_event,session)=>{ if(session?.user){state.user=session.user; if($("appView").classList.contains("hidden")) enterApp();} else if(!state.user){showAuth();} });
-      state.client.auth.getSession().then(({data})=>{ if(data.session?.user){state.user=data.session.user;enterApp();} });
-    }
-    setAuthMode("signin");
-  }
+  const accounts = ["Cash", "Bank", "Airtel Money", "MTN MoMo", "Other"];
+  const state = { client:null, user:null, household:null, transactions:[], budgets:[], goals:[], debts:[], assets:[], audit:[], openingBalances:[], page:"dashboard", authMode:"signin", inviteCode:"", editingId:null, installPrompt:null, refreshBusy:false };
+  const money = n => new Intl.NumberFormat("en-ZM", {style:"currency",currency:"ZMW"}).format(Number(n||0));
+  const today = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
+  const monthNow = () => today().slice(0,7);
+  const escapeHtml = s => String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const errText = e => e?.message || String(e||"Unknown error");
+  const setMessage = (id,msg,kind="") => { const el=$(id); if(el){el.textContent=msg||"";el.className="notice"+(kind?" "+kind:"");} };
+  const toast = msg => { const el=$("toast"); el.textContent=msg;el.classList.add("show");window.setTimeout(()=>el.classList.remove("show"),3000); };
+  const sum = (list,type,month=null) => list.filter(t=>t.type===type&&(!month||String(t.transaction_date).slice(0,7)===month)).reduce((a,t)=>a+Number(t.amount||0),0);
+  const isConfigured = () => SUPABASE_URL.startsWith("https://")&&!SUPABASE_URL.includes("YOUR_")&&SUPABASE_ANON_KEY&&!SUPABASE_ANON_KEY.includes("YOUR_");
+  const showAuth = () => { $("authView").classList.remove("hidden");$("appView").classList.add("hidden"); };
+  const showApp = () => { $("authView").classList.add("hidden");$("appView").classList.remove("hidden");$("userEmail").textContent=state.user?.email||""; };
+  const pageTitles = {dashboard:"DASHBOARD",income:"INCOME",expenses:"EXPENSES",transactions:"TRANSACTIONS",reports:"REPORTS",budgets:"BUDGETS",savings:"SAVINGS GOALS",debts:"DEBTS & RECEIVABLES",assets:"ASSETS",settings:"SETTINGS & ACCESS"};
+  function navigate(page){state.page=page;document.querySelectorAll(".page").forEach(el=>el.classList.add("hidden"));$(page+"Page")?.classList.remove("hidden");document.querySelectorAll("[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===page));$("pageTitle").textContent=pageTitles[page]||"DASHBOARD";renderPage();}
+  function renderPage(){if(state.page==="dashboard")renderDashboard();if(state.page==="income")renderList("incomeList",state.transactions.filter(t=>t.type==="income"));if(state.page==="expenses")renderList("expenseList",state.transactions.filter(t=>t.type==="expense"));if(state.page==="transactions")renderTransactions();if(state.page==="reports")renderReports();if(state.page==="budgets")renderBudgets();if(state.page==="savings")renderGoals();if(state.page==="debts")renderDebts();if(state.page==="assets")renderAssets();if(state.page==="settings")renderHousehold();}
+  async function refresh(){if(!state.client||!state.user||state.refreshBusy)return;state.refreshBusy=true;try{
+    const {data:membership,error:memberError}=await state.client.from("household_members").select("household_id,role,households(id,name,created_at)").maybeSingle();if(memberError)throw memberError;
+    state.household=membership?{id:membership.household_id,role:membership.role,name:membership.households?.name||"THE NKAUSU HOUSE",created_at:membership.households?.created_at}:null;
+    if(!state.household){state.transactions=[];state.budgets=[];state.goals=[];state.debts=[];state.assets=[];state.openingBalances=[];$("setupBanner").innerHTML="<strong>Household access required</strong>Open Settings & Access and join your existing household with an invitation code.";$("setupBanner").classList.remove("hidden");renderPage();return;}
+    $("setupBanner").classList.add("hidden");
+    const results=await Promise.all([
+      state.client.from("transactions").select("*").order("transaction_date",{ascending:false}).order("created_at",{ascending:false}),
+      state.client.from("household_budgets").select("*").order("month_start",{ascending:false}),
+      state.client.from("savings_goals").select("*").order("created_at",{ascending:false}),
+      state.client.from("household_debts").select("*").order("created_at",{ascending:false}),
+      state.client.from("household_assets").select("*").order("created_at",{ascending:false}),
+      state.client.from("household_audit_log").select("id,household_id,actor_id,table_name,action,record_id,created_at,summary").order("created_at",{ascending:false}).limit(30),
+      state.client.from("household_accounts").select("*").order("account_name")
+    ]);
+    for(const r of results)if(r.error)throw r.error;
+    [state.transactions,state.budgets,state.goals,state.debts,state.assets,state.audit,state.openingBalances]=results.map(r=>r.data||[]);
+    const syncedCount=await syncOfflineQueue();if(syncedCount){const fresh=await state.client.from("transactions").select("*").order("transaction_date",{ascending:false}).order("created_at",{ascending:false});if(!fresh.error)state.transactions=fresh.data||[];}renderPage();
+  }catch(e){toast("Could not refresh data: "+errText(e));}finally{state.refreshBusy=false;updateOnlineStatus();}}
+  function updateOnlineStatus(){const el=$("syncStatus");if(!el)return;const online=navigator.onLine;el.textContent=online?"● ONLINE":"● OFFLINE";el.classList.toggle("offline",!online);}
+  function transactionRow(t,actions=true){const typ=t.type==="income"?"+":t.type==="expense"?"−":"↔";const amountText=t.type==="transfer"?money(t.amount):typ+money(t.amount);return `<div class="transaction-row"><div><div class="transaction-name">${escapeHtml(t.description)}</div><div class="transaction-meta">${escapeHtml(t.category||t.type)} · ${escapeHtml(t.transaction_date)} · ${escapeHtml(t.account_name||"Cash")}${t.payment_method?" · "+escapeHtml(t.payment_method):""}</div></div><div class="row-end"><div class="amount ${escapeHtml(t.type)}">${amountText}</div>${actions?`<div class="row-actions"><button class="delete-btn" data-edit="${escapeHtml(t.id)}">Edit</button><button class="delete-btn" data-delete="${escapeHtml(t.id)}">Delete</button></div>`:""}</div></div>`;}
+  function renderList(id,tx){$(id).innerHTML=tx.length?`<div class="table-wrap"><table><thead><tr><th>DATE</th><th>DESCRIPTION</th><th>CATEGORY</th><th>ACCOUNT / METHOD</th><th>AMOUNT</th><th>ACTIONS</th></tr></thead><tbody>${tx.map(t=>`<tr><td>${escapeHtml(t.transaction_date)}</td><td>${escapeHtml(t.description)}${t.notes?`<div class="transaction-meta">${escapeHtml(t.notes)}</div>`:""}</td><td>${escapeHtml(t.category)}</td><td>${escapeHtml(t.account_name||"Cash")}<div class="transaction-meta">${escapeHtml(t.payment_method||"Other")}</div></td><td class="amount ${escapeHtml(t.type)}">${t.type==="income"?"+":t.type==="expense"?"−":"↔"}${money(t.amount)}</td><td><div class="row-actions"><button class="delete-btn" data-edit="${escapeHtml(t.id)}">Edit</button><button class="delete-btn" data-delete="${escapeHtml(t.id)}">Delete</button></div></td></tr>`).join("")}</tbody></table></div>`:'<div class="empty">No records in this section yet.</div>';}
+  function renderTransactions(){const q=$("searchTransactions").value.trim().toLowerCase(),type=$("typeFilter").value,from=$("fromDate").value,to=$("toDate").value;const tx=state.transactions.filter(t=>(type==="all"||t.type===type)&&(!from||t.transaction_date>=from)&&(!to||t.transaction_date<=to)&&(!q||`${t.description} ${t.category} ${t.notes||""} ${t.account_name||""} ${t.payment_method||""}`.toLowerCase().includes(q)));renderList("transactionList",tx);}
+  function accountTotals(){const totals=Object.fromEntries(accounts.map(a=>[a,Number(state.openingBalances.find(x=>x.account_name===a)?.opening_balance||0)]));for(const t of state.transactions){const amount=Number(t.amount||0),from=t.account_name||"Cash";if(!(from in totals))totals[from]=0;if(t.type==="income")totals[from]+=amount;else if(t.type==="expense")totals[from]-=amount;else if(t.type==="transfer"){totals[from]-=amount;const to=t.to_account||"Other";if(!(to in totals))totals[to]=0;totals[to]+=amount;}}return totals;}
+  function netWorth(){return Object.values(accountTotals()).reduce((s,v)=>s+Number(v||0),0)+state.assets.reduce((s,a)=>s+Number(a.estimated_value||0),0)+state.debts.filter(d=>d.debt_type==="receivable").reduce((s,d)=>s+Number(d.outstanding_amount||0),0)-state.debts.filter(d=>d.debt_type==="owed").reduce((s,d)=>s+Number(d.outstanding_amount||0),0);}
+  function renderDashboard(){const tx=state.transactions,m=monthNow();$("totalIncome").textContent=money(sum(tx,"income"));$("totalExpenses").textContent=money(sum(tx,"expense"));$("netBalance").textContent=money(sum(tx,"income")-sum(tx,"expense"));$("monthIncome").textContent=money(sum(tx,"income",m));$("monthExpenses").textContent=money(sum(tx,"expense",m));$("netWorth").textContent=money(netWorth());const years=new Set([String(new Date().getFullYear())]);tx.forEach(t=>years.add(String(t.transaction_date).slice(0,4)));const select=$("summaryYear"),old=select.value;select.innerHTML=[...years].sort((a,b)=>b.localeCompare(a)).map(y=>`<option>${y}</option>`).join("");if(years.has(old))select.value=old;renderMonthly();$("recentTransactions").innerHTML=tx.length?tx.slice(0,6).map(t=>transactionRow(t,false)).join(""):'<div class="empty">No transactions yet. Add your first household record.</div>';const balances=accountTotals();$("accountBalances").innerHTML=Object.entries(balances).map(([name,value])=>`<article class="account-card"><span>${escapeHtml(name.toUpperCase())}</span><strong>${money(value)}</strong></article>`).join("");const warnings=budgetWarnings();$("dashboardBudgetWarnings").innerHTML=warnings.length?warnings.slice(0,5).map(b=>`<div class="warning-row"><span>${escapeHtml(b.category)} · ${Math.round(b.used)}% used</span><strong>${money(b.spent)} / ${money(b.limit_amount)}</strong></div>`).join(""):'<div class="empty">No current-month budget warnings.</div>';}
+  function renderMonthly(){const year=$("summaryYear").value||String(new Date().getFullYear()),tx=state.transactions.filter(t=>String(t.transaction_date).startsWith(year)),months=Array.from({length:12},(_,i)=>({key:`${year}-${String(i+1).padStart(2,"0")}`,label:new Date(Number(year),i,1).toLocaleDateString("en",{month:"short"})})),values=months.map(m=>({...m,income:sum(tx,"income",m.key),expense:sum(tx,"expense",m.key)})),max=Math.max(1,...values.flatMap(v=>[v.income,v.expense]));$("monthlySummary").innerHTML=values.map(v=>`<div class="month-row"><div class="month-name">${v.label}</div><div class="month-bars"><div class="bar-track" title="Income ${money(v.income)}"><div class="bar" style="width:${v.income/max*100}%"></div></div><div class="bar-track" title="Expenses ${money(v.expense)}"><div class="bar expense" style="width:${v.expense/max*100}%"></div></div><div class="bar-legend"><span>In ${money(v.income)}</span><span>Out ${money(v.expense)}</span></div></div></div>`).join("");}
+  function renderReports(){const period=$("reportPeriod").value,year=$("reportYear").value||String(new Date().getFullYear()),month=monthNow();const tx=state.transactions.filter(t=>period==="all"||(period==="year"&&String(t.transaction_date).startsWith(year))||(period==="month"&&String(t.transaction_date).startsWith(month)));$("reportIncome").textContent=money(sum(tx,"income"));$("reportExpenses").textContent=money(sum(tx,"expense"));$("reportNet").textContent=money(sum(tx,"income")-sum(tx,"expense"));const byCat={};tx.filter(t=>t.type==="expense").forEach(t=>byCat[t.category]=(byCat[t.category]||0)+Number(t.amount));const rows=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);const byMethod={};tx.filter(t=>t.type!=="transfer").forEach(t=>{const key=`${t.payment_method||"Other"} · ${t.type}`;byMethod[key]=(byMethod[key]||0)+Number(t.amount);});const methods=Object.entries(byMethod).sort((a,b)=>b[1]-a[1]);$("reportBreakdown").innerHTML=`<h3>EXPENSES BY CATEGORY</h3>${rows.length?`<div class="table-wrap"><table><thead><tr><th>CATEGORY</th><th>TOTAL</th><th>SHARE</th></tr></thead><tbody>${rows.map(([c,v])=>`<tr><td>${escapeHtml(c)}</td><td>${money(v)}</td><td>${sum(tx,"expense")?Math.round(v/sum(tx,"expense")*100):0}%</td></tr>`).join("")}</tbody></table></div>`:'<div class="empty">No expenses for this reporting period.</div>'}<h3>ACTIVITY BY PAYMENT METHOD</h3>${methods.length?`<div class="table-wrap"><table><thead><tr><th>PAYMENT METHOD · TYPE</th><th>TOTAL</th></tr></thead><tbody>${methods.map(([name,value])=>`<tr><td>${escapeHtml(name)}</td><td>${money(value)}</td></tr>`).join("")}</tbody></table></div>`:'<div class="empty">No income or expenses for this period.</div>'}`;$("auditList").innerHTML=state.audit.length?state.audit.map(a=>`<div class="audit-row"><div><strong>${escapeHtml(a.action||"CHANGE")} · ${escapeHtml(a.table_name||"record")}</strong><div class="transaction-meta">${escapeHtml(a.summary||"")}</div></div><time>${escapeHtml(new Date(a.created_at).toLocaleString())}</time></div>`).join(""):'<div class="empty">No audit entries yet. Transaction changes are recorded after the database migration is installed.</div>';}
+  function budgetWarnings(){return state.budgets.filter(b=>String(b.month_start).slice(0,7)===monthNow()).map(b=>{const spent=state.transactions.filter(t=>t.type==="expense"&&t.category.toLowerCase()===b.category.toLowerCase()&&String(t.transaction_date).slice(0,7)===monthNow()).reduce((s,t)=>s+Number(t.amount),0);return {...b,spent,used:Number(b.limit_amount)?spent/Number(b.limit_amount)*100:0};}).filter(b=>b.used>=75).sort((a,b)=>b.used-a.used);}
+  function renderBudgets(){const list=state.budgets;$("budgetList").innerHTML=list.length?`<div class="table-wrap"><table><thead><tr><th>MONTH</th><th>CATEGORY</th><th>LIMIT</th><th>SPENT</th><th>STATUS</th><th></th></tr></thead><tbody>${list.map(b=>{const spent=state.transactions.filter(t=>t.type==="expense"&&t.category.toLowerCase()===b.category.toLowerCase()&&String(t.transaction_date).slice(0,7)===String(b.month_start).slice(0,7)).reduce((s,t)=>s+Number(t.amount),0),pct=Number(b.limit_amount)?spent/Number(b.limit_amount)*100:0;return `<tr><td>${escapeHtml(String(b.month_start).slice(0,7))}</td><td>${escapeHtml(b.category)}</td><td>${money(b.limit_amount)}</td><td>${money(spent)}</td><td><div class="progress-track"><div class="progress-fill ${pct>=100?"over":""}" style="width:${Math.min(100,pct)}%"></div></div><small>${Math.round(pct)}% used${pct>=100?" · OVER BUDGET":pct>=75?" · WARNING":""}</small></td><td><button class="delete-btn" data-delete-row="household_budgets" data-id="${escapeHtml(b.id)}">Delete</button></td></tr>`;}).join("")}</tbody></table></div>`:'<div class="empty">No budgets yet. Add a category limit above.</div>';}
+  function renderGoals(){$("goalList").innerHTML=state.goals.length?`<div class="goal-grid">${state.goals.map(g=>{const pct=Number(g.target_amount)?Number(g.current_amount)/Number(g.target_amount)*100:0;return `<article class="goal-card"><div class="panel-head"><h3>${escapeHtml(g.title)}</h3><button class="delete-btn" data-delete-row="savings_goals" data-id="${escapeHtml(g.id)}">Delete</button></div><strong>${money(g.current_amount)} <span>of ${money(g.target_amount)}</span></strong><div class="progress-track"><div class="progress-fill" style="width:${Math.min(100,pct)}%"></div></div><div class="transaction-meta">${Math.round(pct)}% saved${g.target_date?" · Target "+escapeHtml(g.target_date):""}</div><form class="inline-update" data-goal-update="${escapeHtml(g.id)}"><input type="number" min="0" step="0.01" value="${Number(g.current_amount)}" aria-label="Current saved amount"><button class="btn outline" type="submit">Update saved</button></form></article>`;}).join("")}</div>`:'<div class="empty">Add your first savings goal. Emergency fund is a useful option.</div>';}
+  function renderDebts(){$("debtList").innerHTML=state.debts.length?`<div class="table-wrap"><table><thead><tr><th>RECORD</th><th>TYPE</th><th>ORIGINAL</th><th>OUTSTANDING</th><th>DUE</th><th>MONTHLY PAYMENT</th><th></th></tr></thead><tbody>${state.debts.map(d=>`<tr><td>${escapeHtml(d.name)}</td><td>${d.debt_type==="owed"?"We owe":"Owed to us"}</td><td>${money(d.original_amount)}</td><td>${money(d.outstanding_amount)}</td><td>${escapeHtml(d.due_date||"—")}</td><td>${money(d.monthly_payment||0)}</td><td><button class="delete-btn" data-edit-row="household_debts" data-id="${escapeHtml(d.id)}">Update</button> <button class="delete-btn" data-delete-row="household_debts" data-id="${escapeHtml(d.id)}">Delete</button></td></tr>`).join("")}</tbody></table></div>`:'<div class="empty">No debts or receivables recorded.</div>';}
+  function renderAssets(){$("assetList").innerHTML=state.assets.length?`<div class="table-wrap"><table><thead><tr><th>ASSET</th><th>CATEGORY</th><th>ESTIMATED VALUE</th><th>ACQUIRED</th><th></th></tr></thead><tbody>${state.assets.map(a=>`<tr><td>${escapeHtml(a.name)}</td><td>${escapeHtml(a.category)}</td><td>${money(a.estimated_value)}</td><td>${escapeHtml(a.acquired_on||"—")}</td><td><button class="delete-btn" data-edit-row="household_assets" data-id="${escapeHtml(a.id)}">Update</button> <button class="delete-btn" data-delete-row="household_assets" data-id="${escapeHtml(a.id)}">Delete</button></td></tr>`).join("")}</tbody></table></div>`:'<div class="empty">No assets recorded.</div>';}
+  function renderHousehold(){const h=state.household;$("openingBalancesList").innerHTML=state.openingBalances.length?`<div class="table-wrap"><table><thead><tr><th>ACCOUNT</th><th>OPENING BALANCE</th><th></th></tr></thead><tbody>${state.openingBalances.map(a=>`<tr><td>${escapeHtml(a.account_name)}</td><td>${money(a.opening_balance)}</td><td><button class="delete-btn" data-edit-opening="${escapeHtml(a.account_name)}">Edit</button></td></tr>`).join("")}</tbody></table></div>`:"<div class='empty'>No opening balances set. Accounts currently start at K0.00.</div>";$("householdDetails").innerHTML=h?`<span>Household</span><strong>${escapeHtml(h.name)} · ${escapeHtml(h.role)}</strong>`:'<span>No household joined yet. Use an invitation code below.</span>';$("generateInvite").disabled=!(h&&h.role==="owner");}
+  function setAuthMode(mode){state.authMode=mode;document.querySelectorAll("[data-auth-tab]").forEach(b=>b.classList.toggle("active",b.dataset.authTab===mode));$("signupFields").classList.toggle("hidden",mode!=="signup");$("authSubmit").textContent=mode==="signup"?"Create account":"Sign in";$("authPassword").autocomplete=mode==="signup"?"new-password":"current-password";setMessage("authMessage","");}
+  function populateCategories(type,selected){const select=$("recordCategory");select.innerHTML=categories[type].map(c=>`<option ${c===selected?"selected":""}>${escapeHtml(c)}</option>`).join("");}
+  function openDialog(type="income",id=null){if(!state.household){navigate("settings");toast("Join your household first in Settings & Access.");return;}state.editingId=id;const t=id?state.transactions.find(x=>String(x.id)===String(id)):null;$("transactionForm").reset();$("recordType").value=t?.type||type;$("recordAmount").value=t?.amount??"";$("recordDate").value=t?.transaction_date||today();populateCategories(t?.type||type,t?.category);$("recordDescription").value=t?.description||"";$("recordPayment").value=t?.payment_method||"Cash";$("recordAccount").value=t?.account_name||"Cash";$("recordToAccount").value=t?.to_account||"Bank";$("recordPaidBy").value=t?.paid_by||"me";$("recordNotes").value=t?.notes||"";$("dialogTitle").textContent=t?"EDIT TRANSACTION":"ADD TRANSACTION";$("saveRecord").textContent=t?"Save changes":"Save transaction";$("transferFields").classList.toggle("hidden",(t?.type||type)!=="transfer");setMessage("formMessage","");$("transactionDialog").showModal();}
+  async function handleAuth(e){e.preventDefault();if(!isConfigured()){setMessage("authMessage","Configure your Supabase URL and publishable key in app.js.","error");return;}const email=$("authEmail").value.trim(),password=$("authPassword").value;$("authSubmit").disabled=true;try{if(state.authMode==="signup"){const {data,error}=await state.client.auth.signUp({email,password,options:{data:{full_name:$("displayName").value.trim()}}});if(error)throw error;if(!data.session)setMessage("authMessage","Account created. Check your email to confirm your address, then sign in.","success");else{state.user=data.user;await enterApp();}}else{const {data,error}=await state.client.auth.signInWithPassword({email,password});if(error)throw error;state.user=data.user;await enterApp();}}catch(e){setMessage("authMessage",errText(e),"error");}finally{$("authSubmit").disabled=false;}}
+  async function enterApp(){showApp();await refresh();navigate(state.page||"dashboard");}
+  function queueKey(){return `nkausu-offline-${state.user?.id||"anonymous"}`;}
+  function getQueue(){try{return JSON.parse(localStorage.getItem(queueKey())||"[]");}catch{return [];}}
+  function setQueue(q){localStorage.setItem(queueKey(),JSON.stringify(q));}
+  async function syncOfflineQueue(){if(!navigator.onLine||!state.user||!state.household)return 0;const queue=getQueue();if(!queue.length)return 0;const keep=[];for(const item of queue){try{const {error}=await state.client.from("transactions").insert({...item,household_id:state.household.id,created_by:state.user.id});if(error)throw error;}catch{keep.push(item);}}setQueue(keep);const synced=queue.length-keep.length;if(synced)toast(`${synced} offline transaction(s) synced.`);return synced;}
+  async function saveTransaction(e){e.preventDefault();if(!state.household)return;const type=$("recordType").value,amount=Number($("recordAmount").value);if(!Number.isFinite(amount)||amount<=0){setMessage("formMessage","Enter an amount greater than zero.","error");return;}if(type==="transfer"&&$("recordAccount").value===$("recordToAccount").value){setMessage("formMessage","Choose two different accounts for a transfer.","error");return;}const payload={household_id:state.household.id,type,amount,transaction_date:$("recordDate").value,category:$("recordCategory").value,description:$("recordDescription").value.trim(),notes:$("recordNotes").value.trim()||null,payment_method:$("recordPayment").value,account_name:$("recordAccount").value,to_account:type==="transfer"?$("recordToAccount").value:null,paid_by:$("recordPaidBy").value,created_by:state.user.id};$("saveRecord").disabled=true;try{if(state.editingId){const {error}=await state.client.from("transactions").update(payload).eq("id",state.editingId);if(error)throw error;toast("Transaction updated.");}else if(!navigator.onLine){const queue=getQueue();queue.push({...payload,household_id:undefined,created_by:undefined});setQueue(queue);toast("Saved on this device; it will sync when online.");}else{const {error}=await state.client.from("transactions").insert(payload);if(error)throw error;toast("Transaction saved.");}$("transactionDialog").close();await refresh();}catch(e){setMessage("formMessage",errText(e),"error");}finally{$("saveRecord").disabled=false;}}
+  async function deleteTransaction(id){if(!window.confirm("Delete this transaction permanently? The change will be recorded in the audit history."))return;try{const {error}=await state.client.from("transactions").delete().eq("id",id);if(error)throw error;await refresh();toast("Transaction deleted.");}catch(e){toast("Could not delete transaction: "+errText(e));}}
+  async function saveSimple(table,payload,message){if(!state.household){toast("Join your household first.");return;}try{const {error}=await state.client.from(table).insert({...payload,household_id:state.household.id,created_by:state.user.id});if(error)throw error;toast(message);await refresh();}catch(e){toast("Could not save: "+errText(e));}}
+  async function saveOpeningBalance(e){e.preventDefault();if(!state.household)return;const account_name=$("openingAccount").value,opening_balance=Number($("openingBalance").value);try{const {error}=await state.client.from("household_accounts").upsert({household_id:state.household.id,account_name,opening_balance,created_by:state.user.id},{onConflict:"household_id,account_name"});if(error)throw error;await refresh();toast("Opening balance saved.");}catch(e){toast("Could not save opening balance: "+errText(e));}}
+  async function saveBudget(e){e.preventDefault();if(!state.household)return;const month=$("budgetMonth").value||monthNow();try{const payload={household_id:state.household.id,created_by:state.user.id,category:$("budgetCategory").value.trim(),limit_amount:Number($("budgetLimit").value),month_start:month+"-01"};const {error}=await state.client.from("household_budgets").upsert(payload,{onConflict:"household_id,category,month_start"});if(error)throw error;toast("Budget saved.");await refresh();$("budgetForm").reset();$("budgetMonth").value=monthNow();}catch(e){toast("Could not save budget: "+errText(e));}}
+  async function saveGoal(e){e.preventDefault();await saveSimple("savings_goals",{title:$("goalTitle").value.trim(),target_amount:Number($("goalTarget").value),current_amount:Number($("goalSaved").value||0),target_date:$("goalDate").value||null,status:"active"},"Savings goal added.");$("goalForm").reset();$("goalSaved").value="0";}
+  async function saveDebt(e){e.preventDefault();await saveSimple("household_debts",{name:$("debtName").value.trim(),debt_type:$("debtType").value,original_amount:Number($("debtOriginal").value),outstanding_amount:Number($("debtOutstanding").value),due_date:$("debtDue").value||null,monthly_payment:Number($("debtPayment").value||0)},"Debt record added.");$("debtForm").reset();$("debtPayment").value="0";}
+  async function saveAsset(e){e.preventDefault();await saveSimple("household_assets",{name:$("assetName").value.trim(),category:$("assetCategory").value.trim(),estimated_value:Number($("assetValue").value),acquired_on:$("assetDate").value||null},"Asset added.");$("assetForm").reset();}
+  async function deleteRow(table,id){if(!window.confirm("Delete this record? This cannot be undone."))return;try{const {error}=await state.client.from(table).delete().eq("id",id);if(error)throw error;await refresh();toast("Record deleted.");}catch(e){toast("Could not delete record: "+errText(e));}}
+  async function updateGoal(id,value){try{const {error}=await state.client.from("savings_goals").update({current_amount:Number(value)}).eq("id",id);if(error)throw error;await refresh();toast("Savings progress updated.");}catch(e){toast("Could not update goal: "+errText(e));}}
+  async function updateSimpleRow(table,id){const list=table==="household_debts"?state.debts:state.assets,row=list.find(x=>String(x.id)===String(id));if(!row)return;if(table==="household_debts"){const value=prompt("Enter new outstanding balance (ZMW):",String(row.outstanding_amount));if(value===null)return;if(!Number.isFinite(Number(value))||Number(value)<0){toast("Enter a valid balance.");return;}try{const {error}=await state.client.from(table).update({outstanding_amount:Number(value)}).eq("id",id);if(error)throw error;await refresh();toast("Outstanding balance updated.");}catch(e){toast("Could not update: "+errText(e));}}else{const value=prompt("Enter new estimated asset value (ZMW):",String(row.estimated_value));if(value===null)return;if(!Number.isFinite(Number(value))||Number(value)<0){toast("Enter a valid value.");return;}try{const {error}=await state.client.from(table).update({estimated_value:Number(value)}).eq("id",id);if(error)throw error;await refresh();toast("Asset value updated.");}catch(e){toast("Could not update: "+errText(e));}}}
+  async function createInvite(){$("generateInvite").disabled=true;setMessage("inviteMessage","");try{const {data,error}=await state.client.rpc("create_household_invitation");if(error)throw error;state.inviteCode=data;$("copyInvite").disabled=false;$("inviteMessage").dataset.code=data;setMessage("inviteMessage","Code created. Share privately; expires in 7 days and works once.","success");toast("Invitation code created.");}catch(e){setMessage("inviteMessage",errText(e),"error");}finally{$("generateInvite").disabled=!(state.household&&state.household.role==="owner");}}
+  async function joinHousehold(e){e.preventDefault();setMessage("joinMessage","");try{const {error}=await state.client.rpc("join_household",{invitation_code:$("inviteCode").value.trim()});if(error)throw error;setMessage("joinMessage","You have joined the household.","success");await refresh();toast("Household joined.");}catch(e){setMessage("joinMessage",errText(e),"error");}}
+  async function copyInvite(){const code=$("inviteMessage").dataset.code||state.inviteCode;if(!code)return;try{await navigator.clipboard.writeText(code);toast("Invitation code copied.");}catch{prompt("Copy this invitation code:",code);}}
+  function downloadBlob(filename,blob){const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+  function exportCsv(){const rows=[["Date","Type","Amount ZMW","Category","Description","Account","To account","Payment method","Recorded by","Notes"],...state.transactions.map(t=>[t.transaction_date,t.type,t.amount,t.category,t.description,t.account_name||"Cash",t.to_account||"",t.payment_method||"Other",t.paid_by||"",t.notes||""])];const csv=rows.map(r=>r.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(",")).join("\r\n");downloadBlob("nkausu-house-transactions.csv",new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"}));}
+  function exportBackup(){const data={format:"THE_NKAUSU_HOUSE_BACKUP",version:2,exported_at:new Date().toISOString(),household_name:state.household?.name,transactions:state.transactions,budgets:state.budgets,goals:state.goals,debts:state.debts,assets:state.assets};downloadBlob(`nkausu-house-backup-${today()}.json`,new Blob([JSON.stringify(data,null,2)],{type:"application/json"}));}
+  async function restoreBackup(file){try{const data=JSON.parse(await file.text());if(data.format!=="THE_NKAUSU_HOUSE_BACKUP")throw new Error("This file is not a THE NKAUSU HOUSE backup.");if(!state.household)throw new Error("Join your household before restoring.");if(!confirm("Restore these records into your current household? Existing records will NOT be deleted. Duplicate IDs may be skipped or updated."))return;const mapping=[["transactions",data.transactions||[]],["household_budgets",data.budgets||[]],["savings_goals",data.goals||[]],["household_debts",data.debts||[]],["household_assets",data.assets||[]]];let count=0;for(const [table,items] of mapping){for(const item of items){const copy={...item,household_id:state.household.id,created_by:state.user.id};delete copy.created_at;delete copy.updated_at;const {error}=await state.client.from(table).upsert(copy,{onConflict:"id"});if(error)throw new Error(`${table}: ${error.message}`);count++;}}await refresh();toast(`Backup restored: ${count} records processed.`);}catch(e){toast("Restore failed: "+errText(e));}finally{$("restoreBackup").value="";}}
+  function install(){if(state.installPrompt){state.installPrompt.prompt();state.installPrompt.userChoice.finally(()=>{state.installPrompt=null;$("installApp").classList.add("hidden");});}else toast("In Chrome, open the browser menu and choose Install app or Add to Home screen.");}
+  function init(){document.querySelectorAll("[data-auth-tab]").forEach(b=>b.addEventListener("click",()=>setAuthMode(b.dataset.authTab)));$("authForm").addEventListener("submit",handleAuth);document.querySelectorAll("[data-page]").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.page)));document.querySelectorAll("[data-go]").forEach(b=>b.addEventListener("click",()=>navigate(b.dataset.go)));document.querySelectorAll("[data-add]").forEach(b=>b.addEventListener("click",()=>openDialog(b.dataset.add)));$("quickAdd").addEventListener("click",()=>openDialog("income"));$("transactionAdd").addEventListener("click",()=>openDialog("income"));$("recordType").addEventListener("change",()=>{populateCategories($("recordType").value);$("transferFields").classList.toggle("hidden",$("recordType").value!=="transfer");$("dialogTitle").textContent=$("recordType").value==="income"?"ADD INCOME":$("recordType").value==="expense"?"ADD EXPENSE":"ACCOUNT TRANSFER";});$("transactionForm").addEventListener("submit",saveTransaction);["closeDialog","cancelDialog"].forEach(id=>$(id).addEventListener("click",()=>$("transactionDialog").close()));$("summaryYear").addEventListener("change",renderMonthly);["searchTransactions","typeFilter","fromDate","toDate"].forEach(id=>$(id).addEventListener("input",renderTransactions));$("reportPeriod").addEventListener("change",renderReports);$("reportYear").addEventListener("change",renderReports);$("accountForm").addEventListener("submit",saveOpeningBalance);$("budgetForm").addEventListener("submit",saveBudget);$("goalForm").addEventListener("submit",saveGoal);$("debtForm").addEventListener("submit",saveDebt);$("assetForm").addEventListener("submit",saveAsset);$("budgetMonth").value=monthNow();$("reportYear").innerHTML=Array.from({length:8},(_,i)=>new Date().getFullYear()-i).map(y=>`<option>${y}</option>`).join("");$("exportCsv").addEventListener("click",exportCsv);$("exportBackup").addEventListener("click",exportBackup);$("restoreBackup").addEventListener("change",e=>{if(e.target.files?.[0])restoreBackup(e.target.files[0]);});$("generateInvite").addEventListener("click",createInvite);$("copyInvite").addEventListener("click",copyInvite);$("joinForm").addEventListener("submit",joinHousehold);$("installAppSettings").addEventListener("click",install);$("installApp").addEventListener("click",install);
+    document.addEventListener("click",e=>{const edit=e.target.closest("[data-edit]");if(edit){openDialog("income",edit.dataset.edit);return;}const del=e.target.closest("[data-delete]");if(del){deleteTransaction(del.dataset.delete);return;}const rowdel=e.target.closest("[data-delete-row]");if(rowdel){deleteRow(rowdel.dataset.deleteRow,rowdel.dataset.id);return;}const rowedit=e.target.closest("[data-edit-row]");if(rowedit){updateSimpleRow(rowedit.dataset.editRow,rowedit.dataset.id);return;}const opening=e.target.closest("[data-edit-opening]");if(opening){const row=state.openingBalances.find(x=>x.account_name===opening.dataset.editOpening);if(row){$("openingAccount").value=row.account_name;$("openingBalance").value=row.opening_balance;$("openingBalance").focus();}return;}});document.addEventListener("submit",e=>{const f=e.target.closest("[data-goal-update]");if(f){e.preventDefault();updateGoal(f.dataset.goalUpdate,f.querySelector("input").value);}});$("signOut").addEventListener("click",async()=>{await state.client.auth.signOut();state.user=null;state.household=null;state.transactions=[];showAuth();});window.addEventListener("online",async()=>{updateOnlineStatus();if(state.user)await refresh();});window.addEventListener("offline",updateOnlineStatus);window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();state.installPrompt=e;$("installApp").classList.remove("hidden");});if("serviceWorker" in navigator&&location.protocol.startsWith("http"))navigator.serviceWorker.register("./sw.js").catch(()=>{});if(!isConfigured())setMessage("authMessage","Configure the Supabase URL and publishable key in app.js.","error");if(window.supabase&&isConfigured()){state.client=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);state.client.auth.onAuthStateChange((_event,session)=>{if(session?.user){state.user=session.user;if($("appView").classList.contains("hidden"))enterApp();}else if(!state.user)showAuth();});state.client.auth.getSession().then(({data})=>{if(data.session?.user){state.user=data.session.user;enterApp();}});}setAuthMode("signin");updateOnlineStatus();}
   document.addEventListener("DOMContentLoaded",init);
 })();
