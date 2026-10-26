@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0F172A">
+  <meta name="description" content="Private household accounting for THE NKAUSU HOUSE.">
+  <title>THE NKAUSU HOUSE</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div id="authView" class="auth-wrap">
+    <section class="auth-card">
+      <div class="brand-mark">NH</div>
+      <p class="eyebrow">HOUSEHOLD ACCOUNTING</p>
+      <h1>THE NKAUSU HOUSE</h1>
+      <p class="muted">A clear picture of your household money, together.</p>
+      <div class="tabs">
+        <button class="tab active" data-auth-tab="signin">Sign in</button>
+        <button class="tab" data-auth-tab="signup">Create account</button>
+      </div>
+      <form id="authForm">
+        <label>Email address<input id="authEmail" type="email" autocomplete="email" required placeholder="you@example.com"></label>
+        <label>Password<input id="authPassword" type="password" autocomplete="current-password" minlength="8" required placeholder="At least 8 characters"></label>
+        <div id="signupFields" class="hidden">
+          <label>Your name<input id="displayName" type="text" autocomplete="name" placeholder="Your name"></label>
+        </div>
+        <button class="btn primary full" type="submit" id="authSubmit">Sign in</button>
+      </form>
+      <p id="authMessage" class="notice" role="status"></p>
+      <p class="tiny muted">Your household records are protected by Supabase authentication and database policies.</p>
+    </section>
+  </div>
+
+  <div id="appView" class="app hidden">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark small">NH</div><div><strong>THE NKAUSU HOUSE</strong><span>HOUSEHOLD ACCOUNTS</span></div></div>
+      <nav class="nav" aria-label="Main navigation">
+        <button class="nav-item active" data-page="dashboard">▦ <span>Dashboard</span></button>
+        <button class="nav-item" data-page="income">↗ <span>Income</span></button>
+        <button class="nav-item" data-page="expenses">↘ <span>Expenses</span></button>
+        <button class="nav-item" data-page="transactions">☷ <span>Transactions</span></button>
+        <button class="nav-item" data-page="household">⌂ <span>Household setup</span></button>
+      </nav>
+      <div class="sidebar-bottom"><span id="userEmail" class="tiny muted"></span><button id="signOut" class="btn outline full">Sign out</button></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar"><div><p class="eyebrow">YOUR HOUSEHOLD FINANCES</p><h1 id="pageTitle">DASHBOARD</h1></div><button id="quickAdd" class="btn primary">＋ Add transaction</button></header>
+      <section id="setupBanner" class="banner hidden"></section>
+      <section id="dashboardPage" class="page">
+        <div class="stats">
+          <article class="stat-card"><span class="stat-label">TOTAL INCOME</span><strong id="totalIncome">K0.00</strong><small>This month <b id="monthIncome">K0.00</b></small></article>
+          <article class="stat-card"><span class="stat-label">TOTAL EXPENSES</span><strong id="totalExpenses">K0.00</strong><small>This month <b id="monthExpenses">K0.00</b></small></article>
+          <article class="stat-card dark"><span class="stat-label">NET BALANCE</span><strong id="netBalance">K0.00</strong><small>All recorded transactions</small></article>
+        </div>
+        <div class="content-grid">
+          <section class="panel"><div class="panel-head"><div><h2>MONTHLY SUMMARY</h2><p class="muted">Income and expenses by month</p></div><select id="summaryYear" aria-label="Summary year"></select></div><div id="monthlySummary" class="monthly-list"><p class="muted">Loading records…</p></div></section>
+          <section class="panel"><div class="panel-head"><div><h2>RECENT TRANSACTIONS</h2><p class="muted">Your latest household activity</p></div><button class="text-btn" data-go="transactions">View all</button></div><div id="recentTransactions"></div></section>
+        </div>
+      </section>
+
+      <section id="incomePage" class="page hidden"><div class="panel"><div class="panel-head"><div><h2>INCOME RECORDS</h2><p class="muted">Salaries, business income, gifts and more</p></div><button class="btn primary" data-add="income">＋ Add income</button></div><div id="incomeList"></div></div></section>
+      <section id="expensesPage" class="page hidden"><div class="panel"><div class="panel-head"><div><h2>EXPENSE RECORDS</h2><p class="muted">Keep household spending organised</p></div><button class="btn primary" data-add="expense">＋ Add expense</button></div><div id="expenseList"></div></div></section>
+      <section id="transactionsPage" class="page hidden"><div class="panel"><div class="panel-head"><div><h2>ALL TRANSACTIONS</h2><p class="muted">Search, filter and manage records</p></div><button class="btn primary" id="transactionAdd">＋ Add transaction</button></div><div class="filters"><input id="searchTransactions" type="search" placeholder="Search description or category…"><select id="typeFilter"><option value="all">All types</option><option value="income">Income</option><option value="expense">Expenses</option></select><input id="fromDate" type="date" aria-label="From date"><input id="toDate" type="date" aria-label="To date"></div><div id="transactionList"></div></div></section>
+      <section id="householdPage" class="page hidden">
+        <div class="content-grid">
+          <section class="panel"><h2>HOUSEHOLD DETAILS</h2><p class="muted">Create your shared household once. Your wife can join with the private invitation code.</p><form id="householdForm"><label>Household name<input id="householdName" value="THE NKAUSU HOUSE" required maxlength="100"></label><button class="btn primary" type="submit">Create household</button></form><p id="householdMessage" class="notice"></p></section>
+          <section class="panel"><h2>JOIN A HOUSEHOLD</h2><p class="muted">Use the invitation code shared privately by the household owner.</p><form id="joinForm"><label>Invitation code<input id="inviteCode" required autocomplete="off" placeholder="Enter private code"></label><button class="btn primary" type="submit">Join household</button></form><p id="joinMessage" class="notice"></p></section>
+        </div>
+        <section class="panel household-status"><h2>YOUR HOUSEHOLD</h2><div id="householdDetails"><p class="muted">Loading household details…</p></div><div class="invite-row"><button id="generateInvite" class="btn outline">Generate invitation code</button><button id="copyInvite" class="btn outline" disabled>Copy code</button></div><p id="inviteMessage" class="notice"></p><p class="tiny muted">Only share the invitation code with the person you want to add. It expires after 7 days and can be used once.</p></section>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="transactionDialog" class="dialog">
+    <form id="transactionForm" method="dialog">
+      <div class="dialog-head"><div><p class="eyebrow">HOUSEHOLD RECORD</p><h2 id="dialogTitle">ADD TRANSACTION</h2></div><button type="button" class="icon-btn" id="closeDialog" aria-label="Close">×</button></div>
+      <label>Transaction type<select id="recordType" required><option value="income">Income</option><option value="expense">Expense</option></select></label>
+      <label>Amount (ZMW)<input id="recordAmount" type="number" min="0.01" step="0.01" required placeholder="0.00"></label>
+      <div class="form-row"><label>Date<input id="recordDate" type="date" required></label><label>Category<select id="recordCategory" required></select></label></div>
+      <label>Description<input id="recordDescription" maxlength="180" required placeholder="What was this transaction for?"></label>
+      <label>Optional notes<textarea id="recordNotes" rows="3" maxlength="1000" placeholder="Additional details (optional)"></textarea></label>
+      <p id="formMessage" class="notice"></p>
+      <div class="dialog-actions"><button type="button" class="btn outline" id="cancelDialog">Cancel</button><button class="btn primary" type="submit" id="saveRecord">Save transaction</button></div>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
